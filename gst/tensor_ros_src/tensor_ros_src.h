@@ -26,8 +26,10 @@ struct _GstTensorRosSrc
 
   GstCaps *caps;
   gboolean silent;
-
   GThread *ros_threaed;   /** ros subscribe thread */
+
+  gchar *topic_name;      /** ROS topic name to subscribe */
+  gulong freq_rate;       /** frequency rate to check */
 };
 
 struct _GstTensorRosSrcClass 

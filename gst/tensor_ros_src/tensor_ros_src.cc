@@ -23,6 +23,7 @@
 #include <tensor_typedef.h>
 #include <string.h>
 
+#include "nns_ros_subscriber.h"
 #include "tensor_ros_src.h"
 
 GST_DEBUG_CATEGORY_STATIC (gst_tensor_ros_src_debug);
@@ -36,8 +37,9 @@ GST_DEBUG_CATEGORY_STATIC (gst_tensor_ros_src_debug);
 enum
 {
   PROP_0,
-  PROP_SILENT,  /*<< Slient mode for debug */
-  PROP_TOPIC,   /*<< ROS topic name to subscribe */
+  PROP_SILENT,      /*<< Slient mode for debug */
+  PROP_TOPIC,       /*<< ROS topic name to subscribe */
+  PROP_FREQ_RATE,   /*<< frequency rate to check the published topic */
 };
 
 /**
@@ -99,6 +101,11 @@ gst_tensor_ros_src_class_init (GstTensorRosSrcClass * klass)
       "ROS Topic Name for subscription", "",
       (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
+  g_object_class_install_property (gobject_class, PROP_FREQ_RATE,
+    g_param_spec_ulong ("freqrate", "Frequency_Rate",
+      "Frequency rate for checking Ros Topic(Hz, Default: 1Hz)",
+      1, G_USEC_PER_SEC, 1, G_PARAM_READWRITE));
+
   gst_element_class_add_static_pad_template (gstelement_class,
     &src_pad_template);
 
@@ -117,6 +124,8 @@ gst_tensor_ros_src_init (GstTensorRosSrc * rossrc)
 {
   /* set the default properties */
   rossrc->silent = FALSE;
+  rossrc->topic_name = NULL;
+  rossrc->freq_rate = G_USEC_PER_SEC;
 }
 
 /**
@@ -125,10 +134,13 @@ gst_tensor_ros_src_init (GstTensorRosSrc * rossrc)
 static void
 gst_tensor_ros_src_dispose (GObject * object)
 {
-  GstTensorRosSrc *src = GST_TENSOR_ROS_SRC (object);
+  GstTensorRosSrc *rossrc = GST_TENSOR_ROS_SRC (object);
 
-  if (src->caps)
-    gst_caps_unref (src->caps);
+  if (rossrc->caps)
+    gst_caps_unref (rossrc->caps);
+
+  if (rossrc->topic_name)
+    g_free (rossrc->topic_name);
 
   G_OBJECT_CLASS (parent_class)->dispose (object);
 }
@@ -148,6 +160,13 @@ gst_tensor_ros_src_set_property (GObject * object, guint prop_id,
       break;
 
     case PROP_TOPIC:
+      rossrc->topic_name = g_strdup(g_value_get_string (value));
+      GST_DEBUG_OBJECT (rossrc, "topic name: %s\n", rossrc->topic_name);
+      break;
+
+    case PROP_FREQ_RATE:
+      rossrc->freq_rate = G_USEC_PER_SEC / g_value_get_ulong (value);
+      GST_DEBUG_OBJECT (rossrc, "Freq Hz: %lu\n", G_USEC_PER_SEC / rossrc->freq_rate);
       break;
 
     default:
@@ -171,6 +190,11 @@ gst_tensor_ros_src_get_property (GObject * object, guint prop_id,
       break;
     
     case PROP_TOPIC:
+      g_value_set_string (value, rossrc->topic_name);
+      break;
+
+    case PROP_FREQ_RATE:
+      g_value_set_uint (value, G_USEC_PER_SEC / rossrc->freq_rate);
       break;
 
     default:
