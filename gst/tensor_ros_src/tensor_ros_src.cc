@@ -45,13 +45,12 @@ class Int32RosListener {
     Int32RosListener (GstTensorRosSrc *rossrc, int count);
     int GetPayloadSize ();
     void Callback(const std_msgs::Int32MultiArray msg);
-
 };
 
 Int32RosListener::Int32RosListener (GstTensorRosSrc *rossrc, int count)
 {
   this->rossrc = rossrc;
-  this->payload_size = count * tensor_element_size[_NNS_INT32];
+  this->payload_size = count * tensor_element_size[rossrc->datatype];
 }
 
 int
@@ -121,6 +120,7 @@ enum
   PROP_SILENT,      /*<< Slient mode for debug */
   PROP_TOPIC,       /*<< ROS topic name to subscribe */
   PROP_FREQ_RATE,   /*<< frequency rate to check the published topic */
+  PROP_DATATYPE,    /*<< Primitive datatype of ROS topic */
 };
 
 /**
@@ -149,6 +149,30 @@ gst_tensor_ros_src_change_state (GstElement * element, GstStateChange transition
 /** GstPushSrc method implementation */
 static GstFlowReturn 
 gst_tensor_ros_src_create (GstPushSrc * src, GstBuffer ** buffer);
+
+/** Utility function */
+static const gchar* str_type[] = {"int32", "uint32",
+  "int16", "uint16",
+  "int8", "uint8",
+  "float64", "float32",
+  "int64", "uint64"};
+
+static tensor_type
+get_tensor_type (const gchar * type_name)
+{
+  int type_count = sizeof(str_type);
+  for (int i = 0; i < type_count; ++i) {
+    if (!g_strcmp0 (type_name, str_type[i]))
+      return static_cast<tensor_type> (i);
+  }
+  return _NNS_END;
+}
+
+static const gchar *
+get_string_type (tensor_type type)
+{
+  return str_type[type];
+}
 
 /**
  * @brief initialize the rossrc's class
@@ -186,6 +210,11 @@ gst_tensor_ros_src_class_init (GstTensorRosSrcClass * klass)
     g_param_spec_ulong ("freqrate", "Frequency_Rate",
       "Frequency rate for checking Ros Topic(Hz, Default: 1Hz)",
       1, G_USEC_PER_SEC, 1, G_PARAM_READWRITE));
+
+  g_object_class_install_property (gobject_class, PROP_DATATYPE,
+    g_param_spec_string ("datatype", "Datatype",
+      "Primitive datatype of target ROS topic", "",
+      (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   gst_element_class_add_static_pad_template (gstelement_class,
     &src_pad_template);
@@ -254,6 +283,11 @@ gst_tensor_ros_src_set_property (GObject * object, guint prop_id,
       GST_DEBUG_OBJECT (rossrc, "Freq Hz: %lu\n", G_USEC_PER_SEC / rossrc->freq_rate);
       break;
 
+    case PROP_DATATYPE:
+      rossrc->datatype = get_tensor_type (g_value_get_string (value));
+      GST_DEBUG_OBJECT (rossrc, "Datatype: %s\n", get_string_type(rossrc->datatype));
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -280,6 +314,10 @@ gst_tensor_ros_src_get_property (GObject * object, guint prop_id,
 
     case PROP_FREQ_RATE:
       g_value_set_uint (value, G_USEC_PER_SEC / rossrc->freq_rate);
+      break;
+
+    case PROP_DATATYPE:
+      g_value_set_string (value, get_string_type(rossrc->datatype));
       break;
 
     default:
