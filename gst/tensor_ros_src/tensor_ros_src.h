@@ -4,6 +4,8 @@
 #include <gst/gst.h>
 #include <gst/base/gstpushsrc.h>
 
+#include "nns_ros_subscriber.h"
+
 G_BEGIN_DECLS
 
 #define GST_TYPE_TENSOR_ROS_SRC \
@@ -26,10 +28,12 @@ struct _GstTensorRosSrc
 
   GstCaps *caps;
   gboolean silent;
-  GThread *ros_threaed;   /** ros subscribe thread */
+  GThread *thread;   /** ros subscribe thread */
 
   gchar *topic_name;      /** ROS topic name to subscribe */
   gulong freq_rate;       /** frequency rate to check */
+
+  class NnsRosSubscriber *ros_sub;
 };
 
 struct _GstTensorRosSrcClass 

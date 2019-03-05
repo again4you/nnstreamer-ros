@@ -23,13 +23,79 @@
 #include <tensor_typedef.h>
 #include <string.h>
 
-#include "nns_ros_subscriber.h"
+#include <std_msgs/Int32MultiArray.h>
+
 #include "tensor_ros_src.h"
 
 GST_DEBUG_CATEGORY_STATIC (gst_tensor_ros_src_debug);
 #define GST_CAT_DEFAULT gst_tensor_ros_src_debug
 
 #define SUPPORTED_CAPS_STRING "application/octet-stream"
+
+/**
+ * @brief Ros Listener class for Int32 type
+ */
+class Int32RosListener {
+  private:
+    GstTensorRosSrc *rossrc;
+
+  public:
+    Int32RosListener (GstTensorRosSrc *rossrc);
+    void Callback(const std_msgs::Int32MultiArray msg);
+};
+
+Int32RosListener::Int32RosListener (GstTensorRosSrc *rossrc)
+{
+  this->rossrc = rossrc;
+}
+
+/**
+ * @brief callback function for each ROS topic event
+ */
+void
+Int32RosListener::Callback(const std_msgs::Int32MultiArray msg)
+{
+  int size = msg.layout.dim[0].size;
+  GST_DEBUG_OBJECT (this->rossrc, "[%s] size: %d\n", __func__, size);
+}
+
+/** ROS Listener instance for each type */
+static Int32RosListener *int32RosListener;
+
+/**
+ * @brief Concrete Ros Subscriber class
+ */
+class TensorRosSub : public NnsRosSubscriber {
+  private:
+    GstTensorRosSrc *rossrc;
+
+  public:
+    TensorRosSub (const gchar *node_name,
+      const gchar *topic_name,
+      GstTensorRosSrc *rossrc,
+      const gulong rate_usec = G_USEC_PER_SEC,
+      int argc = 0,
+      gchar **argv = NULL) : NnsRosSubscriber (node_name, topic_name, rate_usec, argc, argv)
+      {
+        this->rossrc = rossrc;
+      }
+
+      virtual int RegisterCallback (ros::NodeHandle *nh, ros::Subscriber *sub);
+};
+
+/**
+ * @brief register callback function to subscribe ROS topic
+ */
+int
+TensorRosSub::RegisterCallback (ros::NodeHandle *nh, ros::Subscriber *sub)
+{
+  GST_DEBUG_OBJECT (this->rossrc, "[%s]", __func__);
+
+  /* TODO: add more type */
+  *sub = nh->subscribe (this->topic_name, 1000, &Int32RosListener::Callback, int32RosListener);
+
+  return 0;
+}
 
 /**
  * @brief tensor_ros_src properties
@@ -217,6 +283,12 @@ gst_tensor_ros_src_change_state (GstElement * element, GstStateChange transition
     case GST_STATE_CHANGE_NULL_TO_READY:
       /* create thread */
       GST_DEBUG_OBJECT (rossrc, "State is changed: GST_STATE_CHANGE_NULL_TO_READY\n");
+
+      /* TODO: check type */
+      int32RosListener = new Int32RosListener(rossrc);
+      rossrc->ros_sub = new TensorRosSub ("TensorRosSub", rossrc->topic_name,
+        rossrc, rossrc->freq_rate);
+      rossrc->ros_sub->Start (&rossrc->thread);
       break;
 
     default:
@@ -230,6 +302,7 @@ gst_tensor_ros_src_change_state (GstElement * element, GstStateChange transition
     case GST_STATE_CHANGE_READY_TO_NULL:
       /* stop thread */
       GST_DEBUG_OBJECT (rossrc, "State is changed: GST_STATE_CHANGE_READY_TO_NULL\n");
+      rossrc->ros_sub->RequestStop ();
       break;
 
     default:
