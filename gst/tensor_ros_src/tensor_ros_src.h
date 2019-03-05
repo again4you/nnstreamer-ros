@@ -33,6 +33,7 @@ struct _GstTensorRosSrc
   gchar *topic_name;      /** ROS topic name to subscribe */
   gulong freq_rate;       /** frequency rate to check */
 
+  GAsyncQueue *queue;     /**< data queue */
   class NnsRosSubscriber *ros_sub;
 };
 

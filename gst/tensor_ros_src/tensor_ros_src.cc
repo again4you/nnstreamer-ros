@@ -24,6 +24,7 @@
 #include <string.h>
 
 #include <std_msgs/Int32MultiArray.h>
+#include <std_msgs/Int32.h>
 
 #include "tensor_ros_src.h"
 
@@ -38,15 +39,25 @@ GST_DEBUG_CATEGORY_STATIC (gst_tensor_ros_src_debug);
 class Int32RosListener {
   private:
     GstTensorRosSrc *rossrc;
+    int payload_size;
 
   public:
-    Int32RosListener (GstTensorRosSrc *rossrc);
+    Int32RosListener (GstTensorRosSrc *rossrc, int count);
+    int GetPayloadSize ();
     void Callback(const std_msgs::Int32MultiArray msg);
+
 };
 
-Int32RosListener::Int32RosListener (GstTensorRosSrc *rossrc)
+Int32RosListener::Int32RosListener (GstTensorRosSrc *rossrc, int count)
 {
   this->rossrc = rossrc;
+  this->payload_size = count * tensor_element_size[_NNS_INT32];
+}
+
+int
+Int32RosListener::GetPayloadSize ()
+{
+  return this->payload_size;
 }
 
 /**
@@ -55,8 +66,12 @@ Int32RosListener::Int32RosListener (GstTensorRosSrc *rossrc)
 void
 Int32RosListener::Callback(const std_msgs::Int32MultiArray msg)
 {
-  int size = msg.layout.dim[0].size;
-  GST_DEBUG_OBJECT (this->rossrc, "[%s] size: %d\n", __func__, size);
+  gpointer queue_item = g_malloc0 (this->payload_size);
+
+  std::memcpy (queue_item, msg.data.data(), this->payload_size);
+  g_async_queue_push (this->rossrc->queue, queue_item);
+
+  GST_DEBUG_OBJECT (this->rossrc, "Queue size: %d\n", g_async_queue_length (this->rossrc->queue));
 }
 
 /** ROS Listener instance for each type */
@@ -192,6 +207,7 @@ gst_tensor_ros_src_init (GstTensorRosSrc * rossrc)
   rossrc->silent = FALSE;
   rossrc->topic_name = NULL;
   rossrc->freq_rate = G_USEC_PER_SEC;
+  rossrc->queue = g_async_queue_new ();
 }
 
 /**
@@ -204,6 +220,9 @@ gst_tensor_ros_src_dispose (GObject * object)
 
   if (rossrc->caps)
     gst_caps_unref (rossrc->caps);
+
+  if (rossrc->queue)
+    g_async_queue_unref (rossrc->queue);
 
   if (rossrc->topic_name)
     g_free (rossrc->topic_name);
@@ -284,8 +303,8 @@ gst_tensor_ros_src_change_state (GstElement * element, GstStateChange transition
       /* create thread */
       GST_DEBUG_OBJECT (rossrc, "State is changed: GST_STATE_CHANGE_NULL_TO_READY\n");
 
-      /* TODO: check type */
-      int32RosListener = new Int32RosListener(rossrc);
+      /* TODO: check type & it size from parameter */
+      int32RosListener = new Int32RosListener(rossrc, 10);
       rossrc->ros_sub = new TensorRosSub ("TensorRosSub", rossrc->topic_name,
         rossrc, rossrc->freq_rate);
       rossrc->ros_sub->Start (&rossrc->thread);
@@ -318,28 +337,34 @@ gst_tensor_ros_src_change_state (GstElement * element, GstStateChange transition
 static GstFlowReturn
 gst_tensor_ros_src_create (GstPushSrc * src, GstBuffer ** buffer)
 {
-  GstTensorRosSrc *rossrc;
+  gpointer queue_item = NULL;
+  GstTensorRosSrc *rossrc = GST_TENSOR_ROS_SRC (src);
   GstBuffer *buf = NULL;
   GstMemory *mem;
   GstMapInfo info;
-  gsize size;
-  rossrc = GST_TENSOR_ROS_SRC (src);
+  gsize size = int32RosListener->GetPayloadSize();
 
-  /* TODO: Need to fix real data */
+  /* get item from queue */
+  queue_item = g_async_queue_try_pop (rossrc->queue);
+
   buf = gst_buffer_new ();
-  size = 10 * tensor_element_size[_NNS_INT32];
 
   mem = gst_allocator_alloc (NULL, size, NULL);
   gst_memory_map (mem, &info, GST_MAP_WRITE);
 
-  /* No need to initialize */
-  memset (info.data, 0, size);
+  if (queue_item == NULL) {
+    memset (info.data, 0x00, size);
+  } else {
+    std::memcpy(info.data, queue_item, size);
+  }
+
   gst_memory_unmap (mem, &info);
   gst_buffer_append_memory (buf, mem);
 
   *buffer = buf;
 
-  GST_DEBUG_OBJECT (rossrc, "Buffer of TensorRosSrc is pushed! (size: %lu)\n", size);
+  GST_DEBUG_OBJECT (rossrc, "Buffer of TensorRosSrc is pushed! (queue size: %d)\n",
+    g_async_queue_length (rossrc->queue));
 
   return GST_FLOW_OK;
 }
