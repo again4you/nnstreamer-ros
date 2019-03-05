@@ -16,18 +16,18 @@ public:
   int Start (GThread ** gthread_obj);
   int RequestStop ();
 
+protected:
+  gchar *node_name;
+  gchar *topic_name;
+
 private:
   NnsRosSubscriber () {};
 
   static gpointer ThreadFunc (gpointer userdata);
 
-  gchar *node_name;
-  gchar *topic_name;
-  gulong rate_usec;
-
   ros::NodeHandle *nh;
   ros::Subscriber sub;
-
+  gulong rate_usec;
   gboolean request_stop;
 };
 #endif /* __NNS_ROS_SUBSCRIBER_H__ */
