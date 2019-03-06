@@ -30,8 +30,10 @@ struct _GstTensorRosSrc
   gboolean silent;
   GThread *thread;   /** ros subscribe thread */
 
-  tensor_type datatype;   /** Primitive datatype of ROS topic */
   gchar *topic_name;      /** ROS topic name to subscribe */
+  gchar *input_dims;      /** input dimemsion of ROS message */
+  guint count;            /** total item count of ROS message */
+  tensor_type datatype;   /** Primitive datatype of ROS topic */
   gulong freq_rate;       /** frequency rate to check */
 
   GAsyncQueue *queue;     /**< data queue */

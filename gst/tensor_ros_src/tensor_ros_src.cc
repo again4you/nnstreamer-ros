@@ -42,21 +42,14 @@ class Int32RosListener {
     int payload_size;
 
   public:
-    Int32RosListener (GstTensorRosSrc *rossrc, int count);
-    int GetPayloadSize ();
+    Int32RosListener (GstTensorRosSrc *rossrc);
     void Callback(const std_msgs::Int32MultiArray msg);
 };
 
-Int32RosListener::Int32RosListener (GstTensorRosSrc *rossrc, int count)
+Int32RosListener::Int32RosListener (GstTensorRosSrc *rossrc)
 {
   this->rossrc = rossrc;
-  this->payload_size = count * tensor_element_size[rossrc->datatype];
-}
-
-int
-Int32RosListener::GetPayloadSize ()
-{
-  return this->payload_size;
+  this->payload_size = rossrc->count * tensor_element_size[rossrc->datatype];
 }
 
 /**
@@ -121,6 +114,7 @@ enum
   PROP_TOPIC,       /*<< ROS topic name to subscribe */
   PROP_FREQ_RATE,   /*<< frequency rate to check the published topic */
   PROP_DATATYPE,    /*<< Primitive datatype of ROS topic */
+  PROP_INPUT_DIMS,  /*<< Input dimension of Target ROS topic */
 };
 
 /**
@@ -157,6 +151,9 @@ static const gchar* str_type[] = {"int32", "uint32",
   "float64", "float32",
   "int64", "uint64"};
 
+/**
+ * @brief Get tensor_type enum value from the type name
+ */
 static tensor_type
 get_tensor_type (const gchar * type_name)
 {
@@ -168,10 +165,32 @@ get_tensor_type (const gchar * type_name)
   return _NNS_END;
 }
 
+/**
+ * @brief Get the type name from tensor_type enum value
+ */
 static const gchar *
 get_string_type (tensor_type type)
 {
   return str_type[type];
+}
+
+/**
+ * @brief Get the total count of input message (e.g. 10:2:1:1 means 20 since 10 * 2 * 1 * 1)
+ */
+static guint
+get_item_count (const gchar* dim_str)
+{
+  guint count = 0;
+
+  if (dim_str) {
+    gchar **dims = g_strsplit (dim_str, ":", -1);
+    guint rank = g_strv_length (dims);
+    count = atoi (dims[0]);
+    for (unsigned int i = 1; i < rank; ++i) {
+      count = count * atoi (dims[i]);
+    }
+  }
+  return count;
 }
 
 /**
@@ -216,6 +235,11 @@ gst_tensor_ros_src_class_init (GstTensorRosSrcClass * klass)
       "Primitive datatype of target ROS topic", "",
       (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
+  g_object_class_install_property (gobject_class, PROP_INPUT_DIMS,
+    g_param_spec_string ("input", "Input dimension",
+      "Input dimension of target ROS topic", "",
+      (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
   gst_element_class_add_static_pad_template (gstelement_class,
     &src_pad_template);
 
@@ -256,6 +280,9 @@ gst_tensor_ros_src_dispose (GObject * object)
   if (rossrc->topic_name)
     g_free (rossrc->topic_name);
 
+  if (rossrc->input_dims)
+    g_free (rossrc->input_dims);
+
   G_OBJECT_CLASS (parent_class)->dispose (object);
 }
 
@@ -286,6 +313,12 @@ gst_tensor_ros_src_set_property (GObject * object, guint prop_id,
     case PROP_DATATYPE:
       rossrc->datatype = get_tensor_type (g_value_get_string (value));
       GST_DEBUG_OBJECT (rossrc, "Datatype: %s\n", get_string_type(rossrc->datatype));
+      break;
+
+    case PROP_INPUT_DIMS:
+      rossrc->input_dims = g_strdup(g_value_get_string (value));
+      rossrc->count = get_item_count (rossrc->input_dims);
+      GST_DEBUG_OBJECT (rossrc, "Item count: %u\n", rossrc->count);
       break;
 
     default:
@@ -320,6 +353,10 @@ gst_tensor_ros_src_get_property (GObject * object, guint prop_id,
       g_value_set_string (value, get_string_type(rossrc->datatype));
       break;
 
+    case PROP_INPUT_DIMS:
+      g_value_set_string (value, rossrc->input_dims);
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -341,8 +378,8 @@ gst_tensor_ros_src_change_state (GstElement * element, GstStateChange transition
       /* create thread */
       GST_DEBUG_OBJECT (rossrc, "State is changed: GST_STATE_CHANGE_NULL_TO_READY\n");
 
-      /* TODO: check type & it size from parameter */
-      int32RosListener = new Int32RosListener(rossrc, 10);
+      /* TODO: check type from parameter */
+      int32RosListener = new Int32RosListener(rossrc);
       rossrc->ros_sub = new TensorRosSub ("TensorRosSub", rossrc->topic_name,
         rossrc, rossrc->freq_rate);
       rossrc->ros_sub->Start (&rossrc->thread);
@@ -380,13 +417,12 @@ gst_tensor_ros_src_create (GstPushSrc * src, GstBuffer ** buffer)
   GstBuffer *buf = NULL;
   GstMemory *mem;
   GstMapInfo info;
-  gsize size = int32RosListener->GetPayloadSize();
+  gsize size = rossrc->count * tensor_element_size[rossrc->datatype];
 
   /* get item from queue */
   queue_item = g_async_queue_try_pop (rossrc->queue);
 
   buf = gst_buffer_new ();
-
   mem = gst_allocator_alloc (NULL, size, NULL);
   gst_memory_map (mem, &info, GST_MAP_WRITE);
 
@@ -400,7 +436,6 @@ gst_tensor_ros_src_create (GstPushSrc * src, GstBuffer ** buffer)
   gst_buffer_append_memory (buf, mem);
 
   *buffer = buf;
-
   GST_DEBUG_OBJECT (rossrc, "Buffer of TensorRosSrc is pushed! (queue size: %d)\n",
     g_async_queue_length (rossrc->queue));
 
