@@ -27,44 +27,12 @@
 #include <std_msgs/Int32.h>
 
 #include "tensor_ros_src.h"
+#include "tensor_ros_listener.h"
 
 GST_DEBUG_CATEGORY_STATIC (gst_tensor_ros_src_debug);
 #define GST_CAT_DEFAULT gst_tensor_ros_src_debug
 
 #define SUPPORTED_CAPS_STRING "application/octet-stream"
-
-/**
- * @brief Ros Listener class for Int32 type
- */
-class Int32RosListener {
-  private:
-    GstTensorRosSrc *rossrc;
-    int payload_size;
-
-  public:
-    Int32RosListener (GstTensorRosSrc *rossrc);
-    void Callback(const std_msgs::Int32MultiArray msg);
-};
-
-Int32RosListener::Int32RosListener (GstTensorRosSrc *rossrc)
-{
-  this->rossrc = rossrc;
-  this->payload_size = rossrc->count * tensor_element_size[rossrc->datatype];
-}
-
-/**
- * @brief callback function for each ROS topic event
- */
-void
-Int32RosListener::Callback(const std_msgs::Int32MultiArray msg)
-{
-  gpointer queue_item = g_malloc0 (this->payload_size);
-
-  std::memcpy (queue_item, msg.data.data(), this->payload_size);
-  g_async_queue_push (this->rossrc->queue, queue_item);
-
-  GST_DEBUG_OBJECT (this->rossrc, "Queue size: %d\n", g_async_queue_length (this->rossrc->queue));
-}
 
 /** ROS Listener instance for each type */
 static Int32RosListener *int32RosListener;
@@ -191,6 +159,26 @@ get_item_count (const gchar* dim_str)
     }
   }
   return count;
+}
+
+/**
+ * @brief Register listener object considering datatype of ROS topic
+ */
+static void
+register_listener (GstTensorRosSrc *prossrc)
+{
+  switch (prossrc->datatype) {
+    /* TODO: Need to add more types */
+    case _NNS_UINT32:
+      break;
+
+    case _NNS_INT32:
+    default:
+      int32RosListener = new Int32RosListener(prossrc);
+      prossrc->ros_sub = new TensorRosSub ("TensorRosSub", prossrc->topic_name,
+        prossrc, prossrc->freq_rate);
+      break;
+  }
 }
 
 /**
@@ -377,11 +365,7 @@ gst_tensor_ros_src_change_state (GstElement * element, GstStateChange transition
     case GST_STATE_CHANGE_NULL_TO_READY:
       /* create thread */
       GST_DEBUG_OBJECT (rossrc, "State is changed: GST_STATE_CHANGE_NULL_TO_READY\n");
-
-      /* TODO: check type from parameter */
-      int32RosListener = new Int32RosListener(rossrc);
-      rossrc->ros_sub = new TensorRosSub ("TensorRosSub", rossrc->topic_name,
-        rossrc, rossrc->freq_rate);
+      register_listener(rossrc);
       rossrc->ros_sub->Start (&rossrc->thread);
       break;
 
